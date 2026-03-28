@@ -103,6 +103,7 @@ export class PipelineOrchestrator {
         outputPath,
         this.config.aspectRatio,
         subtitlesPath,
+        this.config.music,
       );
 
       // Step 5: Generate YouTube upload metadata
@@ -140,11 +141,18 @@ export class PipelineOrchestrator {
     breakdown: SceneBreakdown,
     projectDir: string,
   ): Promise<GeneratedAssets[]> {
-    const results = await Promise.allSettled(
-      breakdown.scenes.map((scene) =>
-        this.generateSceneAssets(scene.index, scene, projectDir),
-      ),
-    );
+    // Cap at 3 concurrent scenes to respect ElevenLabs' concurrent request limit
+    const CONCURRENCY = 3;
+    const scenes = breakdown.scenes;
+    const results: PromiseSettledResult<GeneratedAssets>[] = [];
+
+    for (let i = 0; i < scenes.length; i += CONCURRENCY) {
+      const batch = scenes.slice(i, i + CONCURRENCY);
+      const batchResults = await Promise.allSettled(
+        batch.map((scene) => this.generateSceneAssets(scene.index, scene, projectDir)),
+      );
+      results.push(...batchResults);
+    }
 
     const assets: GeneratedAssets[] = [];
     for (const result of results) {

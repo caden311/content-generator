@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { defaultGenerationConfig } from "./config/index.js";
 import { PipelineOrchestrator } from "./pipeline/orchestrator.js";
 import { logger } from "./utils/logger.js";
-import type { ModelTier } from "./types/index.js";
+import type { ModelTier, MusicMood } from "./types/index.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -19,6 +19,8 @@ Options:
   --aspect <16:9|9:16|1:1>         Aspect ratio (default: 16:9)
   --format <youtube|shorts>         Named alias: youtube=16:9, shorts=9:16
   --dry-run                         Skip all API calls, generate placeholder media locally
+  --music <mood|path>               Background music: calm, epic, upbeat, focus, or a file path
+  --music-volume <0.0-1.0>          Music volume relative to narration (default: 0.12)
   --help                            Show this help
 
 Examples:
@@ -37,6 +39,8 @@ Examples:
   let voice: string | undefined;
   let aspectRatio: "16:9" | "9:16" | "1:1" = "16:9";
   let dryRun = false;
+  let musicTrack: string | undefined;
+  let musicVolume: number | undefined;
 
   for (let i = 1; i < args.length; i++) {
     switch (args[i]) {
@@ -60,6 +64,12 @@ Examples:
       }
       case "--dry-run":
         dryRun = true;
+        break;
+      case "--music":
+        musicTrack = args[++i];
+        break;
+      case "--music-volume":
+        musicVolume = parseFloat(args[++i] ?? "0.12");
         break;
     }
   }
@@ -99,6 +109,12 @@ Examples:
   };
   if (voice !== undefined) {
     overrides.voice = voice;
+  }
+  if (musicTrack !== undefined) {
+    overrides.music = {
+      track: musicTrack as MusicMood | string,
+      ...(musicVolume !== undefined ? { volume: musicVolume } : {}),
+    };
   }
   const config = defaultGenerationConfig(overrides);
 

@@ -37,6 +37,15 @@ export interface VideoProject {
 
 export type ModelTier = "budget" | "standard" | "premium";
 
+export type MusicMood = "calm" | "epic" | "upbeat" | "focus";
+
+export interface MusicOptions {
+  track: MusicMood | string;
+  volume?: number;
+  fadeInSeconds?: number;
+  fadeOutSeconds?: number;
+}
+
 export interface GenerationConfig {
   modelTier: ModelTier;
   outputDir: string;
@@ -44,6 +53,7 @@ export interface GenerationConfig {
   resolution: "720p" | "1080p" | "4k";
   voice?: string;
   dryRun?: boolean;
+  music?: MusicOptions;
 }
 
 // Adapter interfaces — any provider must implement these

@@ -3,7 +3,8 @@ import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { logger } from "../utils/logger.js";
-import type { GeneratedAssets, SceneBreakdown } from "../types/index.js";
+import type { GeneratedAssets, MusicOptions, SceneBreakdown } from "../types/index.js";
+import { musicAvailable } from "./music.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,12 +33,26 @@ const DIMENSIONS: Record<"16:9" | "9:16" | "1:1", { w: number; h: number }> = {
   "1:1": { w: 1080, h: 1080 },
 };
 
+function buildMusicFilter(opts: MusicOptions, _musicPath: string, durationSecs: number): string {
+  const vol = opts.volume ?? 0.12;
+  const fadeIn = opts.fadeInSeconds ?? 2;
+  const fadeOut = opts.fadeOutSeconds ?? 3;
+  const fadeOutStart = Math.max(0, durationSecs - fadeOut);
+  return [
+    `[2]aloop=loop=-1:size=2147483647[music_loop]`,
+    `[music_loop]afade=t=in:st=0:d=${fadeIn},afade=t=out:st=${fadeOutStart}:d=${fadeOut}[music_fade]`,
+    `[music_fade]volume=${vol}[music_vol]`,
+    `[1][music_vol]amix=inputs=2:duration=first:dropout_transition=0[audio_out]`,
+  ].join(";");
+}
+
 export async function assembleVideo(
   breakdown: SceneBreakdown,
   assets: GeneratedAssets[],
   outputPath: string,
   aspectRatio: "16:9" | "9:16" | "1:1" = "16:9",
   subtitlesPath?: string,
+  music?: MusicOptions,
 ): Promise<string> {
   if (!(await ffmpegAvailable())) {
     throw new Error(
@@ -134,24 +149,51 @@ export async function assembleVideo(
   if (finalAudioPath) {
     const videoDuration = await getMediaDuration(concatenatedPath);
     const audioDuration = await getMediaDuration(finalAudioPath);
-    const duration = String(Math.min(videoDuration, audioDuration));
+    const durationNum = Math.min(videoDuration, audioDuration);
+    const duration = String(durationNum);
+
+    const musicPath = music ? musicAvailable(music) : null;
+    if (music && !musicPath) {
+      logger.warn(`Music file not found for track "${music.track}" — continuing without music`);
+    }
 
     let subtitlesBurned = false;
     if (subtitlesPath && fs.existsSync(subtitlesPath)) {
       try {
-        await execFileAsync("ffmpeg", [
-          "-y",
-          "-i", concatenatedPath,
-          "-i", finalAudioPath,
-          "-c:v", "libx264",
-          "-preset", "medium",
-          "-crf", "18",
-          "-vf", `ass=filename=${path.resolve(subtitlesPath)}`,
-          "-c:a", "aac",
-          "-b:a", "192k",
-          "-t", duration,
-          outputPath,
-        ]);
+        if (musicPath) {
+          const filterComplex = buildMusicFilter(music!, musicPath, durationNum);
+          await execFileAsync("ffmpeg", [
+            "-y",
+            "-i", concatenatedPath,
+            "-i", finalAudioPath,
+            "-i", musicPath,
+            "-filter_complex", filterComplex,
+            "-map", "0:v",
+            "-vf", `ass=filename=${path.resolve(subtitlesPath)}`,
+            "-map", "[audio_out]",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", duration,
+            outputPath,
+          ]);
+        } else {
+          await execFileAsync("ffmpeg", [
+            "-y",
+            "-i", concatenatedPath,
+            "-i", finalAudioPath,
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-vf", `ass=filename=${path.resolve(subtitlesPath)}`,
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", duration,
+            outputPath,
+          ]);
+        }
         subtitlesBurned = true;
       } catch (err: any) {
         if (err?.stderr?.includes("No such filter")) {
@@ -162,17 +204,35 @@ export async function assembleVideo(
       }
     }
     if (!subtitlesBurned) {
-      // No subtitles (or subtitle burn failed) — copy video stream as-is
-      await execFileAsync("ffmpeg", [
-        "-y",
-        "-i", concatenatedPath,
-        "-i", finalAudioPath,
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-t", duration,
-        outputPath,
-      ]);
+      if (musicPath) {
+        const filterComplex = buildMusicFilter(music!, musicPath, durationNum);
+        await execFileAsync("ffmpeg", [
+          "-y",
+          "-i", concatenatedPath,
+          "-i", finalAudioPath,
+          "-i", musicPath,
+          "-filter_complex", filterComplex,
+          "-map", "0:v",
+          "-map", "[audio_out]",
+          "-c:v", "copy",
+          "-c:a", "aac",
+          "-b:a", "192k",
+          "-t", duration,
+          outputPath,
+        ]);
+      } else {
+        // No subtitles, no music — copy video stream as-is
+        await execFileAsync("ffmpeg", [
+          "-y",
+          "-i", concatenatedPath,
+          "-i", finalAudioPath,
+          "-c:v", "copy",
+          "-c:a", "aac",
+          "-b:a", "192k",
+          "-t", duration,
+          outputPath,
+        ]);
+      }
     }
   } else {
     // No audio — just copy the concatenated video
